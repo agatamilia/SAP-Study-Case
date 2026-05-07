@@ -1,0 +1,27 @@
+*&---------------------------------------------------------------------*
+*& Report ZMILMM_E0003
+*&---------------------------------------------------------------------*
+*&
+*&---------------------------------------------------------------------*
+REPORT zmilmm_e0003.
+
+INCLUDE zabpxin_alv3.
+INCLUDE zmilmm_e0003_top.
+INCLUDE zmilmm_e0003_f01.
+
+START-OF-SELECTION.
+  IF p_rbloc EQ 'X'.
+    PERFORM f_guiupload.
+
+  ELSEIF p_rbsrv EQ 'X'.
+    PERFORM f_gserverdata.
+  ENDIF.
+
+  PERFORM f_rfile.
+  PERFORM f_check.
+
+  IF p_exec EQ 'X'.
+    PERFORM f_post.
+  ENDIF.
+
+  PERFORM f_display.
