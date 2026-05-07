@@ -1,0 +1,19 @@
+*&---------------------------------------------------------------------*
+*& Report ZMILPM_E0001
+*&---------------------------------------------------------------------*
+*&
+*&---------------------------------------------------------------------*
+REPORT zmilpm_e0001.
+
+INCLUDE zabpxin_alv3.
+INCLUDE zmilpm_e0001_top.
+INCLUDE zmilpm_e0001_f01.
+
+START-OF-SELECTION.
+  PERFORM f_process_data. "pattern FM
+  CASE 'X'.
+    WHEN rb_not.
+      PERFORM f_not.
+    WHEN rb_mo.
+      PERFORM f_mo. " form f01
+  ENDCASE.
