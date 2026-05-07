@@ -1,0 +1,299 @@
+*&---------------------------------------------------------------------*
+*& Report ZMIL_MATERIAL
+*&---------------------------------------------------------------------*
+*&
+*&---------------------------------------------------------------------*
+REPORT zmil_material.
+*TABLES: zmil_material, zmil_materialcat.
+*deklarasi data utk select option aja==========
+DATA: lv_nomat_ref TYPE zmil_material-nomat,
+      lv_name_ref  TYPE zmil_material-name,
+      lv_idcat_ref TYPE zmil_materialcat-idcat.
+
+SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
+  PARAMETERS: rb_mtn RADIOBUTTON GROUP g1 DEFAULT 'X' USER-COMMAND rad,
+              rb_ins RADIOBUTTON GROUP g1,
+              rb_upd RADIOBUTTON GROUP g1,
+              rb_del RADIOBUTTON GROUP g1,
+              rb_rpt RADIOBUTTON GROUP g1.
+SELECTION-SCREEN END OF BLOCK b1.
+
+SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE TEXT-002.
+  PARAMETERS:
+    p_name   TYPE zmil_material-name MODIF ID ins. "radio button
+
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT (31) TEXT-004 MODIF ID ins. " Label ID Cat
+    PARAMETERS: p_idcat TYPE zmil_materialcat-idcat MODIF ID ins . " Search Hel
+    SELECTION-SCREEN COMMENT (40) lv_dsc MODIF ID ins. " desc cat
+  SELECTION-SCREEN END OF LINE.
+
+  PARAMETERS:
+    p_price  TYPE zmil_material-price MODIF ID ins,
+    p_curry  TYPE zmil_material-curry MODIF ID ins,
+    p_weight TYPE zmil_material-weigh MODIF ID ins,
+    p_meins  TYPE zmil_material-meins MODIF ID ins,
+    p_stats  TYPE zmil_material-stats MODIF ID ins.
+SELECTION-SCREEN END OF BLOCK b2.
+
+
+SELECTION-SCREEN BEGIN OF BLOCK b3 WITH FRAME TITLE TEXT-003.
+  PARAMETERS:
+    p_noma_u TYPE zmil_material-nomat MODIF ID upd,
+    p_name_u TYPE zmil_material-name MODIF ID upd,
+    p_idca_u TYPE zmil_materialcat-idcat MODIF ID upd,
+    p_pric_u TYPE zmil_material-price MODIF ID upd,
+    p_curr_u TYPE zmil_material-curry MODIF ID upd,
+    p_weig_u TYPE zmil_material-weigh MODIF ID upd,
+    p_mein_u TYPE zmil_material-meins MODIF ID upd,
+    p_stat_u TYPE zmil_material-stats MODIF ID upd.
+SELECTION-SCREEN END OF BLOCK b3.
+
+SELECTION-SCREEN BEGIN OF BLOCK b4 WITH FRAME TITLE TEXT-006.
+  PARAMETERS:
+  p_noma_d TYPE zmil_material-nomat MODIF ID del.
+SELECTION-SCREEN END OF BLOCK b4.
+
+SELECTION-SCREEN BEGIN OF BLOCK b5 WITH FRAME TITLE TEXT-005.
+  SELECT-OPTIONS:
+  s_noma_r FOR lv_nomat_ref MODIF ID rep NO-EXTENSION,"no input obo
+  p_name_r FOR lv_name_ref MODIF ID rep, "bisa 22nya
+  p_idca_r FOR lv_idcat_ref MODIF ID rep NO INTERVALS NO-EXTENSION. "just 1 value
+  PARAMETERS:
+  p_stat_r  TYPE zmil_material-stats MODIF ID rep.
+SELECTION-SCREEN END OF BLOCK b5.
+
+*1. INITIALIZATION (optional)
+*2. AT SELECTION-SCREEN ON <field>
+*3. AT SELECTION-SCREEN (general validation)
+*4. AT SELECTION-SCREEN OUTPUT (dynamic screen)
+*5. START-OF-SELECTION (main process)
+*6. END-OF-SELECTION (optional)
+*7. FORM / SUBROUTINE
+
+  "---------------------------------------------------------
+AT SELECTION-SCREEN ON p_idcat. "when idcat enter
+  IF rb_ins = 'X' AND p_idcat IS NOT INITIAL.
+    SELECT SINGLE catdesc
+      FROM zmil_materialcat
+      INTO @lv_dsc " kotak deskripsi
+    WHERE idcat = @p_idcat. "samain dengan input
+    IF sy-subrc <> 0.
+      CLEAR lv_dsc. "bekas sblmnya/salah ambil desc
+    ENDIF.
+  ENDIF.
+  IF  rb_ins = 'X' and p_idcat is not INITIAL.
+      " Cek kategori
+  SELECT SINGLE idcat
+    FROM zmil_materialcat
+    INTO @DATA(lv_idcat)
+  WHERE idcat = @p_idcat.
+
+  IF sy-subrc <> 0.
+    MESSAGE 'Category tidak ditemukan' TYPE 'E'.
+  ENDIF.
+
+  ENDIF.
+*=========================
+*auto fill di update
+AT SELECTION-SCREEN ON p_noma_u.
+  IF rb_upd = 'X' AND p_noma_u IS NOT INITIAL.
+    SELECT SINGLE *
+      FROM zmil_material
+      INTO @DATA(ls_mat)
+    WHERE nomat = @p_noma_u.
+
+    IF sy-subrc = 0.
+      p_name_u = ls_mat-name.
+      p_idca_u = ls_mat-idcat.
+      p_pric_u = ls_mat-price.
+      p_curr_u = ls_mat-curry.
+      p_weig_u = ls_mat-weigh.
+      p_mein_u = ls_mat-meins.
+      p_stat_u = ls_mat-stats.
+*      LEAVE SCREEN. "refresh
+
+    ELSE.
+      MESSAGE 'Material tidak ditemukan' TYPE 'E'.
+      CLEAR: p_name_u, p_idca_u, p_pric_u, p_curr_u, p_weig_u, p_mein_u, p_stat_u.
+    ENDIF.
+  ENDIF.
+
+"=========================
+*AT SELECTION-SCREEN.
+*  CASE sy-ucomm.
+*    WHEN 'ONLI'.
+*
+*      " Validasi hanya untuk INSERT
+*      IF rb_ins = 'X' AND ( p_name IS INITIAL OR p_idcat IS INITIAL ).
+*        MESSAGE 'Field Name & Category wajib diisi untuk Insert' TYPE 'E'.
+*      ENDIF.
+*
+*      " Validasi UPDATE
+*      IF rb_upd = 'X' AND p_noma_u IS INITIAL.
+*        MESSAGE 'Nomor Material wajib diisi untuk Update' TYPE 'E'.
+*      ENDIF.
+*
+*      " Validasi DELETE
+*      IF rb_del = 'X' AND p_noma_d IS INITIAL.
+*        MESSAGE 'Nomor Material wajib diisi untuk Delete' TYPE 'E'.
+*      ENDIF.
+*
+*  ENDCASE.
+AT SELECTION-SCREEN.
+  CASE sy-ucomm.
+    WHEN 'ONLI'.
+      IF p_name IS INITIAL OR p_idcat IS INITIAL.
+        MESSAGE 'Field wajib diisi' TYPE 'E'. "'S' DISPLAY LIKE 'E'.
+      ENDIF.
+  ENDCASE.
+
+*at SELECTION-SCREEN on p_idcat.
+*  IF  rb_ins = 'X' and p_idcat is not INITIAL.
+*      " Cek kategori
+*  SELECT SINGLE idcat
+*    FROM zmil_materialcat
+*    INTO @DATA(lv_idcat)
+*  WHERE idcat = @p_idcat.
+*
+*  IF sy-subrc <> 0.
+*    MESSAGE 'Category tidak ditemukan' TYPE 'E'.
+*  ENDIF.
+*
+*  ENDIF.
+  "--------------------------------------------------------
+* dynamic screen=============
+AT SELECTION-SCREEN OUTPUT. "do user-command
+  LOOP AT SCREEN.
+    IF ( rb_mtn = 'X' AND screen-group1 IS NOT INITIAL ) OR
+      ( rb_ins = 'X' AND screen-group1 <> 'INS' ) OR "Not equal
+       ( rb_upd = 'X' AND screen-group1 <> 'UPD' ) OR
+       ( rb_del = 'X' AND screen-group1 <> 'DEL' ) OR
+       ( rb_rpt = 'X' AND screen-group1 <> 'REP' ).
+
+      " no hide elemen group kosong > radio button
+      IF screen-group1 IS NOT INITIAL.
+        screen-active = 0.
+      ENDIF.
+    ENDIF.
+    MODIFY SCREEN.
+  ENDLOOP.
+
+
+* main process ke form
+START-OF-SELECTION.
+  CASE 'X'.
+    WHEN rb_mtn.
+      PERFORM f_mtn.
+    WHEN rb_ins.
+      PERFORM f_ins.
+    WHEN rb_upd.
+      PERFORM f_upd.
+    WHEN rb_del.
+      PERFORM f_del.
+    WHEN rb_rpt.
+      PERFORM f_rpt.
+  ENDCASE.
+
+*=========================
+FORM f_ins.
+*  IF p_name IS INITIAL OR p_idcat IS INITIAL.
+*    MESSAGE 'Field wajib diisi' TYPE 'E'. "'S' DISPLAY LIKE 'E'.
+*  ENDIF.
+  DATA: lv_nomat TYPE zmil_material-nomat. "loc var 1 value
+
+
+
+*  generate pk tcode snro
+  CALL FUNCTION 'NUMBER_GET_NEXT'
+    EXPORTING
+      nr_range_nr = '01'
+      object      = 'ZMIL_NOMAT'
+    IMPORTING
+      number      = lv_nomat.
+
+  "loc struc 1 line
+  DATA(ls_data) = VALUE zmil_material(
+  nomat = lv_nomat
+  name = p_name
+  idcat = p_idcat
+  price = p_price
+  curry = p_curry
+  weigh = p_weight
+  meins = p_meins
+  stats = p_stats
+   ).
+
+  INSERT zmil_material FROM @ls_data.
+
+  IF sy-subrc = 0.
+    MESSAGE |Material { lv_nomat } berhasil dibuat| TYPE 'S'.
+  ELSE.
+    MESSAGE 'Insert failed' TYPE 'E'.
+  ENDIF.
+ENDFORM.
+
+"=======================
+FORM f_upd.
+  IF p_noma_u IS INITIAL.
+    MESSAGE 'Pilih Nomor Material yang ingin di-update!' TYPE 'E'.
+  ENDIF.
+
+  UPDATE zmil_material
+  SET name = @p_name_u,
+  idcat = @p_idca_u,
+  price = @p_pric_u,
+  curry = @p_curr_u,
+  weigh = @p_weig_u,
+  meins = @p_mein_u,
+  stats = @p_stat_u
+  WHERE nomat = @p_noma_u.
+
+  IF sy-subrc = 0.
+    MESSAGE 'Update Sukses' TYPE 'S'.
+  ELSE.
+    MESSAGE 'Gagal update' TYPE 'E'.
+  ENDIF.
+ENDFORM.
+
+*=====================
+FORM f_del.
+  IF p_noma_d IS INITIAL.
+    MESSAGE 'Isi Nomor Material yang ingin dihapus' TYPE 'E'.
+    RETURN.
+  ENDIF.
+  DELETE FROM zmil_material WHERE nomat = @p_noma_d.
+  IF sy-subrc = 0.
+    MESSAGE 'Data Berhasil Dihapus!' TYPE 'S'.
+  ELSE.
+    MESSAGE 'Data tidak ditemukan di database' TYPE 'E'.
+  ENDIF.
+ENDFORM.
+
+
+*====================
+FORM f_rpt.
+  SELECT * FROM zvmil_material INTO TABLE @DATA(lt_report)" get row to lt
+  WHERE nomat IN @s_noma_r. "range nomat
+
+  IF sy-subrc <> 0 OR lt_report IS INITIAL. "no data in database and lt
+    MESSAGE 'Tidak ada data untuk ditampilkan' TYPE 'E'.
+    RETURN.
+  ENDIF.
+
+  cl_salv_table=>factory( "class for report, factory table maker
+  IMPORTING r_salv_table = DATA(lo_alv) "get rpt > local obj
+  CHANGING  t_table      = lt_report ). "can modif/changing raw data for import
+  lo_alv->display( ).
+ENDFORM.
+
+
+*===============================
+FORM f_mtn.
+  CALL FUNCTION 'VIEW_MAINTENANCE_CALL' "func TMG
+    EXPORTING
+      action    = 'U' "export update
+      view_name = 'ZMIL_MATERIALCAT' "view table
+    EXCEPTIONS
+      OTHERS    = 15. "error other sy-subrc > no TMG
+ENDFORM.
