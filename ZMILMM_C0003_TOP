@@ -1,0 +1,83 @@
+*&---------------------------------------------------------------------*
+*& Include          ZMILMM_E0003_TOP
+*&---------------------------------------------------------------------*
+*POHEADER, POITEM, POACCOUNT
+TYPES:
+  BEGIN OF ty_up,
+    no         TYPE char10,
+    doc_type   TYPE esart,
+    vendor     TYPE elifn,
+    purch_org  TYPE ekorg,
+    pur_group  TYPE bkgrp,
+    material   TYPE matnr18,
+    plant      TYPE ewerk,
+    quantity   TYPE bstmg,
+    po_unit    TYPE bstme,
+    gl_account TYPE saknr,
+    bus_area   TYPE gsber,
+    costcenter TYPE kostl,
+    pmnttrms   TYPE dzterm,      " Payment Terms
+    deliv_date TYPE sydatum,
+  END OF ty_up,
+
+  BEGIN OF ty_alv,
+    po_number  TYPE ebeln,
+    no         TYPE char10,
+    doc_type   TYPE esart,
+    vendor     TYPE elifn,
+    purch_org  TYPE ekorg,
+    pur_group  TYPE bkgrp,
+    material   TYPE matnr18,
+    plant      TYPE ewerk,
+    quantity   TYPE bstmg,
+    po_unit    TYPE bstme,
+    gl_account TYPE saknr,
+    bus_area   TYPE gsber,
+    costcenter TYPE kostl,
+    pmnttrms   TYPE dzterm,
+    deliv_date TYPE sydatum,
+    icon       TYPE char4,
+    message    TYPE string,
+    status     TYPE char1,
+  END OF ty_alv,
+
+  BEGIN OF ty_error,
+    no        TYPE char10,
+    fieldname TYPE string,
+    message   TYPE string,
+  END OF ty_error.
+
+
+SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-000.
+  PARAMETERS : p_rbloc RADIOBUTTON GROUP g1 DEFAULT 'X' USER-COMMAND cmd,
+               p_loc   TYPE rlgrap-filename MODIF ID loc, "GUI_UPLOAD path pc user
+               p_rbsrv RADIOBUTTON GROUP g1,
+               p_srv   TYPE btcpath MODIF ID srv, "Background Processing (Batch) sap standar
+*               p_srv   TYPE string MODIF ID srv, "modern style
+               p_exec  AS CHECKBOX.
+SELECTION-SCREEN END OF BLOCK b1.
+
+DATA: d_line  TYPE string, "d: global var, t: G itab, x: structure
+      d_file  TYPE string,
+*      d_file  TYPE localfile,
+      t_data  TYPE STANDARD TABLE OF string,
+      t_file  TYPE STANDARD TABLE OF string,
+      t_split TYPE STANDARD TABLE OF string,
+      t_up    TYPE STANDARD TABLE OF ty_up,
+      x_up    TYPE ty_up,
+      t_alv   TYPE STANDARD TABLE OF ty_alv,
+      x_alv   TYPE ty_alv,
+      gt_error TYPE STANDARD TABLE OF ty_error,
+      gs_error TYPE ty_error.
+
+*DATA: d_message TYPE string,
+*      d_file    TYPE string.
+
+AT SELECTION-SCREEN OUTPUT.
+  PERFORM f_slc.
+
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_loc.
+  PERFORM f_f4filename.
+
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_srv.
+  PERFORM f_f4sapdir.
