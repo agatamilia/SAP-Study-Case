@@ -1,0 +1,909 @@
+*&---------------------------------------------------------------------*
+*& Include          ZMILMM_E0003_F01
+*&---------------------------------------------------------------------*
+
+
+*&---------------------------------------------------------------------*
+*& Form f_f4filename
+*&---------------------------------------------------------------------*
+
+FORM f_f4filename.
+  CALL FUNCTION 'F4_FILENAME' "popup file browser
+*   EXPORTING
+*     PROGRAM_NAME        = SYST-CPROG "SAP auto detect
+*     DYNPRO_NUMBER       = SYST-DYNNR "no screen: for multi screen program, dialog complex
+*     FIELD_NAME          = ' ' "auto binding selection field
+    IMPORTING
+      file_name = p_loc.
+ENDFORM.
+
+
+
+*&---------------------------------------------------------------------*
+*& Form f_guiupload
+*&---------------------------------------------------------------------*
+
+FORM f_guiupload.
+  d_file = p_loc.
+  CALL FUNCTION 'GUI_UPLOAD'
+    EXPORTING
+      filename                = d_file
+      filetype                = 'ASC' "csv/txt
+      has_field_separator     = 'X' "recognize separator, no auto to field
+*     HEADER_LENGTH           = 0 "header skip
+*     READ_BY_LINE            = 'X' "read line by line, auto no need uncomment
+*     DAT_MODE                = ' ' "
+*     CODEPAGE                = ' ' "encoding file UTF-8, ANSI
+*     IGNORE_CERR             = ABAP_TRUE "Ignore char error
+*     REPLACEMENT             = '#' "Replace error char with #
+*     CHECK_BOM               = ' ' "handle Ignore BOM (Byte Order Mark) -> (Excel / UTF-8)
+*     VIRUS_SCAN_PROFILE      = "Scan file virus
+*     NO_AUTH_CHECK           = ' ' "Skip authorization
+*   IMPORTING
+*     FILELENGTH              = "get length of file and header
+*     HEADER                  =
+    TABLES
+      data_tab                = t_data
+*   CHANGING
+*     ISSCANPERFORMED         = ' ' "Info apakah file discan
+    EXCEPTIONS
+      file_open_error         = 1
+      file_read_error         = 2
+      no_batch                = 3
+      gui_refuse_filetransfer = 4
+      invalid_type            = 5
+      no_authority            = 6
+      unknown_error           = 7
+      bad_data_format         = 8
+      header_not_allowed      = 9
+      separator_not_allowed   = 10
+      header_too_long         = 11
+      unknown_dp_error        = 12
+      access_denied           = 13
+      dp_out_of_memory        = 14
+      disk_full               = 15
+      dp_timeout              = 16
+      OTHERS                  = 17.
+  IF sy-subrc <> 0.
+* Implement suitable error handling here
+  ENDIF.
+ENDFORM.
+
+
+*&---------------------------------------------------------------------*
+*& Form f_rfile
+*&---------------------------------------------------------------------*
+
+FORM normalize_unit CHANGING p_unit TYPE meins
+                             p_error TYPE abap_bool
+                             p_msg TYPE string.
+
+  TRANSLATE p_unit TO UPPER CASE.
+  CONDENSE p_unit.
+
+  "manual mapping unit PC(WAJIB kalau dari CSV bebas)
+  CASE p_unit.
+    WHEN 'PCS' OR 'PC' OR 'PCE'.
+      p_unit = 'PC'.
+  ENDCASE.
+
+  CALL FUNCTION 'CONVERSION_EXIT_CUNIT_INPUT'
+    EXPORTING
+      input  = p_unit
+    IMPORTING
+      output = p_unit
+    EXCEPTIONS
+      OTHERS = 1.
+
+  SELECT SINGLE msehi "field uom
+  FROM t006 "table sap uom
+  INTO @DATA(lv_check)
+  WHERE msehi = @p_unit.
+
+  IF sy-subrc <> 0.
+    p_error = abap_true.
+    p_msg = 'Unit tidak terdaftar di SAP'.
+  ENDIF.
+
+ENDFORM.
+
+FORM f_rfile.
+
+  DATA: lv_qty      TYPE string,
+        lv_date_str TYPE string,
+        lv_day      TYPE string,
+        lv_mon      TYPE string,
+        lv_year     TYPE string,
+        lv_err      TYPE abap_bool,
+        lv_msg      TYPE string,
+        lv_unit     TYPE meins.
+
+  "========================
+  " 1. PARSE FILE > t_up
+  "========================
+  LOOP AT t_data INTO d_line.
+
+    CLEAR: x_up, t_split.
+
+    "skip header read
+    IF sy-tabix = 1.
+      CONTINUE.
+    ENDIF.
+
+    SPLIT d_line AT ';' INTO TABLE t_split.
+    "mapping array to struct x_up
+    READ TABLE t_split INDEX 1 INTO x_up-no.
+    READ TABLE t_split INDEX 2 INTO x_up-doc_type.
+    READ TABLE t_split INDEX 3 INTO x_up-vendor.
+    READ TABLE t_split INDEX 4 INTO x_up-purch_org.
+    READ TABLE t_split INDEX 5 INTO x_up-pur_group.
+    READ TABLE t_split INDEX 6 INTO x_up-material.
+    READ TABLE t_split INDEX 7 INTO x_up-plant.
+
+    "STRING → DIKONVERSI → NUMERIC
+    READ TABLE t_split INDEX 8 INTO lv_qty.
+    x_up-quantity = lv_qty. "
+
+    READ TABLE t_split INDEX 9 INTO lv_unit.
+
+    PERFORM normalize_unit CHANGING lv_unit lv_err lv_msg .
+
+    x_up-po_unit = lv_unit.
+
+    READ TABLE t_split INDEX 10 INTO x_up-gl_account.
+    READ TABLE t_split INDEX 11 INTO x_up-bus_area.
+    READ TABLE t_split INDEX 12 INTO x_up-costcenter.
+    READ TABLE t_split INDEX 13 INTO lv_date_str.
+
+    IF lv_date_str IS NOT INITIAL.
+
+      CONDENSE lv_date_str.
+
+      REPLACE ALL OCCURRENCES OF '/' IN lv_date_str WITH '.'.
+      REPLACE ALL OCCURRENCES OF '-' IN lv_date_str WITH '.'.
+
+      SPLIT lv_date_str AT '.' INTO lv_day lv_mon lv_year.
+
+      IF lv_year IS INITIAL. " berarti format tanpa separator
+        lv_day  = lv_date_str+0(2).
+        lv_mon  = lv_date_str+2(2).
+        lv_year = lv_date_str+4(4).
+      ENDIF.
+
+      x_up-deliv_date = |{ lv_year }{ lv_mon WIDTH = 2 PAD = '0' }{ lv_day WIDTH = 2 PAD = '0' }|. "plus 0 jika 1 char
+
+    ENDIF.
+
+    " NORMALISASI=====================
+    "alpha IN = external to internal 0 for fixed length | cek: domain > routine
+    x_up-vendor     = |{ x_up-vendor ALPHA = IN }|.
+    x_up-material   = |{ x_up-material ALPHA = IN }|.
+    x_up-gl_account = |{ x_up-gl_account ALPHA = IN }|.
+    x_up-costcenter = |{ x_up-costcenter ALPHA = IN }|.
+
+    APPEND x_up TO t_up.
+
+  ENDLOOP.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form f_check XXXXXXXXXXXXXXXXXXXXXX
+*&---------------------------------------------------------------------*
+
+FORM f_check.
+
+  DATA: lv_error     TYPE abap_bool,
+        lv_msg       TYPE string,
+        lv_unit      TYPE meins,
+        lv_day       TYPE scal-indicator,
+        ls_header    TYPE bapimepoheader,
+        ls_headerx   TYPE bapimepoheaderx,
+        lt_item      TYPE TABLE OF bapimepoitem,
+        lt_itemx     TYPE TABLE OF bapimepoitemx,
+        lt_sched     TYPE TABLE OF bapimeposchedule,
+        lt_schedx    TYPE TABLE OF bapimeposchedulx,
+        lt_return    TYPE TABLE OF bapiret2,
+        lv_item      TYPE posnr,
+
+*       nampung unique key dari upload.
+        lt_vendor    TYPE SORTED TABLE OF lfa1-lifnr WITH UNIQUE KEY table_line,
+        lt_mat       TYPE SORTED TABLE OF mara-matnr WITH UNIQUE KEY table_line,
+        lt_plant     TYPE SORTED TABLE OF t001w-werks WITH UNIQUE KEY table_line,
+
+*       hasil SELECT dari database SAP
+        lt_vendor_db TYPE SORTED TABLE OF lfa1-lifnr
+                             WITH UNIQUE KEY table_line,
+
+        lt_mat_db    TYPE SORTED TABLE OF mara-matnr
+                             WITH UNIQUE KEY table_line,
+
+        lt_plant_db  TYPE SORTED TABLE OF t001w-werks
+                           WITH UNIQUE KEY table_line,
+
+        lt_account   TYPE TABLE OF bapimepoaccount,
+        lt_accountx  TYPE TABLE OF bapimepoaccountx.
+
+  CLEAR: t_alv, gt_error.
+  REFRESH gt_error.
+  IF t_up IS INITIAL.
+    MESSAGE 'No data uploaded' TYPE 'E'.
+    RETURN.
+*    exit: stop loop/prcessing block
+*    return: keluar form
+  ENDIF.
+
+  "========================
+  " COLLECT UNIQUE KEYS
+  "========================
+  LOOP AT t_up INTO DATA(ls_up).
+    IF ls_up-vendor IS NOT INITIAL.
+      INSERT ls_up-vendor INTO TABLE lt_vendor.
+    ENDIF.
+
+    IF ls_up-material IS NOT INITIAL.
+      INSERT CONV mara-matnr( ls_up-material ) INTO TABLE lt_mat.
+    ENDIF.
+
+    IF ls_up-plant IS NOT INITIAL.
+      INSERT ls_up-plant INTO TABLE lt_plant.
+    ENDIF.
+  ENDLOOP.
+
+  "Vendor
+  IF lt_vendor IS NOT INITIAL.
+    SELECT lifnr FROM lfa1
+    INTO TABLE lt_vendor_db
+    FOR ALL ENTRIES IN lt_vendor
+    WHERE lifnr = lt_vendor-table_line.
+  ENDIF.
+
+  "Material
+  IF lt_mat IS NOT INITIAL.
+    SELECT matnr FROM mara
+      INTO TABLE lt_mat_db
+      FOR ALL ENTRIES IN lt_mat
+      WHERE matnr = lt_mat-table_line.
+  ENDIF.
+
+  "Plant
+  IF lt_plant IS NOT INITIAL.
+    SELECT werks FROM t001w
+      INTO TABLE lt_plant_db
+      FOR ALL ENTRIES IN lt_plant
+      WHERE werks = lt_plant-table_line.
+  ENDIF.
+
+
+
+  LOOP AT t_up INTO x_up.
+
+    CLEAR: x_alv, lv_error, lv_msg, lv_unit.
+    REFRESH: lt_item, lt_itemx, lt_sched,
+             lt_schedx, lt_return.
+    MOVE-CORRESPONDING x_up TO x_alv.
+
+    "========================
+    " 1. BASIC VALIDATION
+    "========================
+    IF x_up-no IS INITIAL.
+      PERFORM add_error USING x_up-no 'NO' 'Wajib diisi'
+            CHANGING lv_error lv_msg.
+    ENDIF.
+    IF x_up-doc_type IS INITIAL.
+      PERFORM add_error USING x_up-no 'DOC_TYPE' 'Wajib diisi'
+            CHANGING lv_error lv_msg.
+    ENDIF.
+
+    IF x_up-vendor IS INITIAL.
+      PERFORM add_error USING x_up-no 'VENDOR' 'Wajib diisi'
+            CHANGING lv_error lv_msg.
+    ENDIF.
+
+    IF x_up-material IS INITIAL.
+      PERFORM add_error USING x_up-no 'MATERIAL' 'Wajib diisi'
+            CHANGING lv_error lv_msg.
+    ENDIF.
+
+    IF x_up-quantity IS INITIAL OR x_up-quantity <= 0.
+      PERFORM add_error USING x_up-no 'QUANTITY' 'Tidak valid'
+            CHANGING lv_error lv_msg.
+    ENDIF.
+
+    IF x_up-deliv_date IS INITIAL.
+      PERFORM add_error USING x_up-no 'DELIV_DATE' 'Wajib diisi'
+            CHANGING lv_error lv_msg.
+    ENDIF.
+
+    "========================
+    " WEEKEND check
+    "========================
+    IF x_up-deliv_date IS NOT INITIAL.
+
+*      DATA(lv_dow) = ( x_up-deliv_date - '19991227' ) MOD 7. "senin ref tgl
+*
+*      IF lv_dow = 5 OR lv_dow = 6.
+*        PERFORM add_error USING x_up-no 'DELIV_DATE' 'Tidak boleh weekend'
+*              CHANGING lv_error lv_msg.
+*      ENDIF.
+      CALL FUNCTION 'DATE_COMPUTE_DAY'
+        EXPORTING
+          date = x_up-deliv_date
+        IMPORTING
+          day  = lv_day.
+
+      " 1 = Monday ... 7 = Sunday
+      IF lv_day = 6 OR lv_day = 7.
+        PERFORM add_error USING x_up-no 'DELIV_DATE' 'Tidak boleh weekend'
+              CHANGING lv_error lv_msg.
+      ENDIF.
+
+    ENDIF.
+
+    "========================
+    " MASTER DATA CHECK
+    "========================
+    READ TABLE lt_vendor_db WITH KEY table_line = x_up-vendor TRANSPORTING NO FIELDS.
+    IF sy-subrc <> 0 AND x_up-vendor IS NOT INITIAL.
+      PERFORM add_error USING x_up-no 'VENDOR' 'Tidak ditemukan'
+            CHANGING lv_error lv_msg.
+    ENDIF.
+
+    READ TABLE lt_mat_db WITH KEY table_line = x_up-material TRANSPORTING NO FIELDS.
+    IF sy-subrc <> 0 AND x_up-material IS NOT INITIAL.
+      PERFORM add_error USING x_up-no 'MATERIAL' 'Tidak ditemukan'
+            CHANGING lv_error lv_msg.
+    ENDIF.
+
+    READ TABLE lt_plant_db WITH KEY table_line = x_up-plant TRANSPORTING NO FIELDS.
+    IF sy-subrc <> 0 AND x_up-plant IS NOT INITIAL.
+      PERFORM add_error USING x_up-no 'PLANT' 'Tidak valid'
+            CHANGING lv_error lv_msg.
+    ENDIF.
+
+    "========================
+    " UNIT CONVERSION
+    "========================
+    lv_unit = x_up-po_unit.
+
+    PERFORM normalize_unit CHANGING lv_unit lv_error lv_msg .
+    x_up-po_unit = lv_unit.
+
+    "========================
+    " BAPI CHECK
+    "========================
+    IF lv_error IS INITIAL.
+
+      CLEAR lv_item.
+      lv_item = 10.
+
+      ls_header-doc_type  = x_up-doc_type.
+      ls_header-vendor    = x_up-vendor.
+      ls_header-purch_org = x_up-purch_org.
+      ls_header-pur_group = x_up-pur_group.
+
+      ls_headerx-doc_type  = 'X'.
+      ls_headerx-vendor    = 'X'.
+      ls_headerx-purch_org = 'X'.
+      ls_headerx-pur_group = 'X'.
+
+
+      APPEND VALUE #(
+          po_item  = lv_item
+          material = x_up-material
+          plant    = x_up-plant
+          quantity = x_up-quantity
+          po_unit  = x_up-po_unit
+          info_upd = 'X' "auto sap nett price | bapi: POITEM-INFO_UPD
+        ) TO lt_item.
+
+      APPEND VALUE #(
+        po_item  = lv_item
+        po_itemx = 'X'
+        material = 'X'
+        plant    = 'X'
+        quantity = 'X'
+        po_unit  = 'X'
+        info_upd = 'X'
+      ) TO lt_itemx.
+
+      APPEND VALUE #(
+        po_item       = lv_item
+        sched_line    = '0001'
+        delivery_date = x_up-deliv_date
+        quantity      = x_up-quantity
+      ) TO lt_sched.
+
+      APPEND VALUE #(
+        po_item    = lv_item
+        sched_line = '0001'
+        po_itemx   = 'X'
+        delivery_date = 'X'
+        quantity   = 'X'
+      ) TO lt_schedx.
+
+      APPEND VALUE #(
+        po_item    = lv_item
+        serial_no  = '01'
+        gl_account = x_up-gl_account
+        costcenter = x_up-costcenter
+      ) TO lt_account.
+
+      APPEND VALUE #(
+        po_item    = lv_item
+        serial_no  = '01'
+        po_itemx   = 'X'
+        gl_account = 'X'
+        costcenter = 'X'
+      ) TO lt_accountx.
+
+      CALL FUNCTION 'BAPI_PO_CREATE1'
+        EXPORTING
+          poheader    = ls_header
+          poheaderx   = ls_headerx
+          testrun     = 'X'
+        TABLES
+          return      = lt_return
+          poitem      = lt_item
+          poitemx     = lt_itemx
+          poschedule  = lt_sched
+          poschedulex = lt_schedx
+          poaccount   = lt_account
+          poaccountx  = lt_accountx.
+
+      LOOP AT lt_return INTO DATA(ls_ret)
+        WHERE type CA 'AE'. "A= abort
+        PERFORM add_error USING x_up-no 'BAPI'
+              ls_ret-message
+              CHANGING lv_error lv_msg.
+      ENDLOOP.
+
+    ENDIF.
+
+    "========================
+    " 6. FINAL STATUS
+    "========================
+    IF lv_error = abap_true.
+      x_alv-status  = 'E'.
+      x_alv-icon    = icon_red_light.
+      x_alv-message = lv_msg.
+    ELSE.
+      x_alv-status  = 'P'.
+      x_alv-icon    = icon_yellow_light.
+      x_alv-message = 'Ready to create PO'.
+    ENDIF.
+
+    APPEND x_alv TO t_alv.
+
+  ENDLOOP.
+
+ENDFORM.
+
+
+
+FORM build_bdc_po USING ls_group TYPE ty_up "header po
+                        lt_ready TYPE tt_up. "item ready post
+
+  DATA: ls_up       TYPE ty_up, "loop item
+        lv_qty_char TYPE char15,"char from num
+        lv_date_bdc TYPE char10,"me21 ddmmyyyy, internal sap yyyymmdd
+        lv_index    TYPE n LENGTH 2,"row item di layar SAP
+        lv_field    TYPE bdc_fnam. " save dinamic field name
+
+  CLEAR it_bdcdata.
+
+  "================ HEADER =================
+  PERFORM bdc_dynpro USING 'SAPMM06E' '0100'. "header me21
+
+  PERFORM bdc_field USING 'BDC_CURSOR'
+                                'RM06E-BEDAT'. "cursor in doc date
+
+  PERFORM bdc_field USING 'BDC_OKCODE'
+                                '/00'.
+
+  PERFORM bdc_field USING 'EKKO-LIFNR'
+                                ls_group-vendor.
+
+  PERFORM bdc_field USING 'RM06E-BSART'
+                                ls_group-doc_type.
+
+  PERFORM bdc_field USING 'EKKO-EKORG'
+                                ls_group-purch_org.
+
+  PERFORM bdc_field USING 'EKKO-EKGRP'
+                                ls_group-pur_group.
+
+  PERFORM bdc_field USING 'RM06E-WERKS'
+                                ls_group-plant.
+
+  "================ ITEM =================
+  lv_index = 1.
+
+  LOOP AT lt_ready INTO ls_up
+    WHERE no = ls_group-no.
+
+    WRITE ls_up-quantity TO lv_qty_char.
+    CONDENSE lv_qty_char. "remove blank space
+
+    lv_date_bdc =
+    |{ ls_up-deliv_date+6(2) }.{ ls_up-deliv_date+4(2) }.{ ls_up-deliv_date+0(4) }|.
+
+    PERFORM bdc_dynpro USING 'SAPMM06E' '0120'. "screen item me21
+
+    "cursor ke row aktif
+    lv_field = |EKPO-MENGE({ lv_index })|.
+
+    PERFORM bdc_field USING 'BDC_CURSOR'
+                                  lv_field.
+
+    PERFORM bdc_field USING 'BDC_OKCODE'
+                                  '/00'.
+
+    "material
+    lv_field = |EKPO-EMATN({ lv_index })|.
+    PERFORM bdc_field USING lv_field
+                                  ls_up-material.
+
+    "qty
+    lv_field = |EKPO-MENGE({ lv_index })|.
+    PERFORM bdc_field USING lv_field
+                                  lv_qty_char.
+
+    "unit
+    lv_field = |EKPO-MEINS({ lv_index })|.
+    PERFORM bdc_field USING lv_field
+                                  ls_up-po_unit.
+
+    "date
+    lv_field = |RM06E-EEIND({ lv_index })|.
+    PERFORM bdc_field USING lv_field
+                                  lv_date_bdc.
+
+    "IMPORTANT:
+    "paksa SAP generate next line
+    PERFORM bdc_dynpro USING 'SAPMM06E' '0120'.
+
+    PERFORM bdc_field USING 'BDC_OKCODE'
+                                  '/00'.
+
+    lv_index = lv_index + 1.
+
+  ENDLOOP.
+
+  "================ SAVE =================
+  " ENTER supaya quantity kebaca SAP
+  PERFORM bdc_dynpro USING 'SAPMM06E' '0120'. "back to screen item
+
+  PERFORM bdc_field USING 'BDC_CURSOR'
+                                'EKPO-MENGE(01)'.
+
+  PERFORM bdc_field USING 'BDC_OKCODE'
+                                '=BU'. "save po
+  "kalau muncul popup realistic delivery date
+  PERFORM bdc_dynpro USING 'SAPLSPO1' '0300'."popup screen
+
+  PERFORM bdc_field USING 'BDC_OKCODE'
+                                '=YES'. "auto yess
+
+ENDFORM.
+
+
+
+FORM bdc_dynpro USING program dynpro. "screen yg dibuka
+  CLEAR wa_bdcdata.
+  wa_bdcdata-program  = program. "program yg punya screen
+  wa_bdcdata-dynpro   = dynpro. "screen sap
+  wa_bdcdata-dynbegin = 'X'. "awal screen baru
+  APPEND wa_bdcdata TO it_bdcdata. "simpan di itab for CALL TRANSACTION ... USING it_bdcdata
+ENDFORM.
+
+
+
+FORM bdc_field USING fnam fval. "nama  + isi textbox
+  CLEAR wa_bdcdata.
+  wa_bdcdata-fnam = fnam. "vendor EKKO-LIFNR
+  wa_bdcdata-fval = fval. "isi vendor
+  APPEND wa_bdcdata TO it_bdcdata.
+ENDFORM.
+
+
+FORM add_error USING    p_no
+                         p_field
+                         p_msg
+              CHANGING p_error TYPE abap_bool
+                       p_text  TYPE string.
+
+  p_error = abap_true.
+
+  IF p_text IS INITIAL.
+    p_text = |{ p_field }: { p_msg }|.
+  ELSE.
+    p_text = |{ p_text } | && |{ p_field }: { p_msg }|.
+  ENDIF.
+
+
+  CLEAR gs_error.
+  gs_error-no        = p_no.
+  gs_error-fieldname = p_field.
+  gs_error-message   = p_msg.
+
+  APPEND gs_error TO gt_error.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form f_post XXXXXXXXXXXXXXXXXXXXX
+*&---------------------------------------------------------------------*
+
+FORM f_post .
+  DATA:lt_group TYPE STANDARD TABLE OF ty_up,
+       ls_group TYPE ty_up,
+       lt_ready TYPE STANDARD TABLE OF ty_up,
+       lv_msg   TYPE string,
+       lv_po    TYPE ebeln.
+
+  CLEAR lv_msg.
+  "========================
+  " 1. BLOCK kalau masih ada ERROR
+  "========================
+  IF t_alv IS INITIAL.
+    PERFORM f_check.
+  ENDIF.
+
+  "Kalau masih ada error → STOP
+  LOOP AT t_alv INTO DATA(ls_alv) WHERE status = 'E'.
+    MESSAGE 'Masih ada data error, tidak bisa POST' TYPE 'E'.
+    RETURN.
+  ENDLOOP.
+
+
+
+  "========================
+  " 2. AMBIL HANYA DATA YANG LOLOS (STATUS P)
+  "========================
+*  CLEAR lt_group.
+
+
+  LOOP AT t_up INTO DATA(ls_up).
+    READ TABLE t_alv INTO DATA(ls_alv2)
+      WITH KEY no = ls_up-no.
+
+    IF sy-subrc = 0 AND ls_alv2-status = 'P'.
+      APPEND ls_up TO lt_ready.
+    ENDIF.
+  ENDLOOP.
+
+  IF lt_ready IS INITIAL.
+    MESSAGE 'Tidak ada data yang siap di-post' TYPE 'I'.
+    RETURN.
+  ENDIF.
+
+  lt_group = lt_ready.
+  SORT lt_group BY no.
+  DELETE ADJACENT DUPLICATES FROM lt_group COMPARING no.
+
+  "========================
+  " 3. LOOP GROUP (HEADER PO)
+  "========================
+  LOOP AT lt_group INTO ls_group.
+    CLEAR:  it_bdcdata,
+       messtab,
+       lv_msg.
+
+    REFRESH: it_bdcdata,
+             messtab.
+
+    PERFORM build_bdc_po USING ls_group lt_ready.
+
+    CALL TRANSACTION 'ME21'
+    USING it_bdcdata
+          MODE p_mode
+          UPDATE 'S'
+          MESSAGES INTO messtab.
+    CLEAR lv_msg.
+
+    LOOP AT messtab INTO mesg.
+
+      CALL FUNCTION 'FORMAT_MESSAGE'
+        EXPORTING
+          id   = mesg-msgid
+          lang = sy-langu
+          no   = mesg-msgnr
+          v1   = mesg-msgv1
+          v2   = mesg-msgv2
+          v3   = mesg-msgv3
+          v4   = mesg-msgv4
+        IMPORTING
+          msg  = lv_msg.
+*
+*      "ambil message CREATED aja
+      IF lv_msg CS 'created'
+      OR lv_msg CS 'dibuat'.
+        lv_po = mesg-msgv1.
+        EXIT.
+
+      ENDIF.
+
+    ENDLOOP.
+
+    "========================
+    " UPDATE ALV PER NO
+    "========================
+    LOOP AT t_alv INTO x_alv
+      WHERE no = ls_group-no.
+
+      IF lv_msg CS 'created'
+      OR lv_msg CS 'dibuat'.
+
+        x_alv-status    = 'S'.
+        x_alv-icon      = icon_green_light.
+        x_alv-message   = lv_msg.
+
+      ELSE.
+
+        x_alv-status  = 'E'.
+        x_alv-icon    = icon_red_light.
+        x_alv-message = lv_msg.
+
+      ENDIF.
+
+      MODIFY t_alv FROM x_alv
+        TRANSPORTING status
+                     icon
+                     message.
+
+    ENDLOOP.
+
+  ENDLOOP.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form f_display
+*&---------------------------------------------------------------------*
+
+FORM f_display .
+
+  PERFORM f_alv_build_catalog USING :
+        '' 'ICON'        'Indicator' '' '' '' '' '' '' '' 'X',
+        '' 'NO'          'No'     '' '' '' '' '' '' '' '',
+        '' 'DOC_TYPE'    'Doc Type'  '' '' '' '' '' '' '' '',
+        '' 'VENDOR'      'Vendor'    '' '' '' '' '' '' '' '',
+        '' 'PURCH_ORG'   'Purch Org' '' '' '' '' '' '' '' '',
+        '' 'PUR_GROUP'   'Pur Group' '' '' '' '' '' '' '' '',
+        '' 'MATERIAL'    'Material'  '' '' '' '' '' '' '' '',
+        '' 'PLANT'       'Plant'     '' '' '' '' '' '' '' '',
+        '' 'QUANTITY'    'Qty'       '' '' '' '' '' '' '' '',
+        '' 'PO_UNIT'     'Unit'      'EKPO' 'MEINS' '' '' '' '' '' 'X',
+        '' 'DELIV_DATE'     'Deliv date'      '' '' '' '' '' '' '' 'X',
+        '' 'GL_ACCOUNT'  'GL Acc'    '' '' '' '' '' '' '' '',
+        '' 'BUS_AREA'  'Bus Area'    '' '' '' '' '' '' '' '',
+        '' 'COSTCENTER'  'Cost Ctr'  '' '' '' '' '' '' '' '',
+        '' 'MESSAGE'     'Message'   '' '' '' '' '' '' 'X' '',
+        '' 'STATUS'      'Status'    '' '' '' '' '' '' '' ''.
+
+  "hilangin 0
+  LOOP AT t_alv_fctlg INTO DATA(ls_fcat). "itab alv to struct | inline declaration
+
+    IF ls_fcat-fieldname = 'QUANTITY'.
+      ls_fcat-decimals_out = 0.   " hilangkan ,000
+*      ls_fcat-outputlen = 10.     " optional
+      MODIFY t_alv_fctlg FROM ls_fcat. "save change
+    ENDIF.
+
+  ENDLOOP.
+
+  x_alv_layout-zebra = 'X'.
+  x_alv_layout-colwidth_optimize = 'X'.
+*  x_alv_layout-lights_fieldname = 'ICON'.
+
+  d_alv_repid = sy-repid.
+  d_alv_stats = 'F_PF_STATUS'.
+  d_alv_ucomm = 'F_USER_COMMAND'.
+
+  PERFORM f_alv_grid_display TABLES t_alv.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form f_pf_status
+*&---------------------------------------------------------------------*
+
+FORM f_pf_status USING rt_extab TYPE slis_t_extab.
+  SET PF-STATUS 'ST_ALV' EXCLUDING rt_extab. "hidden btn
+ENDFORM.
+
+
+*&---------------------------------------------------------------------*
+*& Form f_user_command
+*&---------------------------------------------------------------------*
+
+FORM f_user_command USING r_ucomm     TYPE sy-ucomm
+                          rs_selfield TYPE slis_selfield.
+
+  CASE r_ucomm.
+
+    WHEN 'CHEC'.
+      PERFORM f_check.
+      rs_selfield-refresh = 'X'.
+
+    WHEN 'POST'.
+      PERFORM f_post.
+      rs_selfield-refresh = 'X'.
+
+    WHEN '&IC1'. "double click / hotspot
+
+      CLEAR x_alv.
+
+      READ TABLE t_alv INTO x_alv INDEX rs_selfield-tabindex.
+      IF sy-subrc <> 0.
+        RETURN.
+      ENDIF.
+
+      CASE rs_selfield-fieldname.
+
+*        WHEN 'MESSAGE'.
+*
+*          DATA lv_text TYPE string.
+*
+*          IF x_alv-message IS NOT INITIAL.
+*
+*            CALL FUNCTION 'POPUP_TO_DISPLAY_TEXT'
+*              EXPORTING
+*                titel     = 'Detail Error per Field'
+*                textline1 = lv_text.
+*
+*          ELSE.
+*
+*            MESSAGE x_alv-message TYPE 'I'.
+*
+*          ENDIF.
+        WHEN 'MESSAGE'.
+
+          DATA: lv_po   TYPE ebeln,
+                lv_text TYPE string,
+                lv_off  TYPE i,
+                lv_len  TYPE i.
+          lv_text = x_alv-message.
+
+          "========================
+          " SUCCESS -> OPEN ME23N
+          "========================
+          IF x_alv-status = 'S'.
+
+            "Cari nomor PO 10 digit dari message
+            FIND REGEX '[0-9]+' IN lv_text
+              MATCH OFFSET lv_off
+              MATCH LENGTH lv_len.
+
+            IF sy-subrc = 0.
+
+              lv_po = lv_text+lv_off(lv_len).
+
+              SET PARAMETER ID 'BES' FIELD lv_po.
+              CALL TRANSACTION 'ME23N' AND SKIP FIRST SCREEN.
+
+            ELSE.
+
+              MESSAGE lv_text TYPE 'I'.
+
+            ENDIF.
+
+          ELSE.
+
+            "========================
+            " ERROR -> POPUP DETAIL
+            "========================
+            CALL FUNCTION 'POPUP_TO_DISPLAY_TEXT'
+              EXPORTING
+                titel     = 'Detail Message'
+                textline1 = lv_text.
+
+          ENDIF.
+
+
+      ENDCASE.
+
+  ENDCASE.
+
+ENDFORM.
