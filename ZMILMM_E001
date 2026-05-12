@@ -1,0 +1,20 @@
+*&---------------------------------------------------------------------*
+*& Report ZMILMM_E0003
+*&---------------------------------------------------------------------*
+*&
+*&---------------------------------------------------------------------*
+REPORT zmilmm_e0004.
+
+INCLUDE zabpxin_alv3.
+INCLUDE zmilmm_e0004_top.
+*INCLUDE zmilmm_e0003_top.
+INCLUDE zmilmm_e0004_f01.
+*INCLUDE zmilmm_e0003_f01.
+
+START-OF-SELECTION.
+
+  PERFORM f_guiupload.
+  PERFORM f_rfile.
+  PERFORM f_check.
+  PERFORM f_post.
+  PERFORM f_display.
